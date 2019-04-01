@@ -16,7 +16,7 @@ Currently, this installation supports macOS and linux, although Windows usage is
 2. In a terminal window, type `curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py`
 3. In a terminal window, type `python3 get-pip.py`
 
-## [Download and Extract My Repository](https://github.com/ericmhuntley/nextstop/archive/master.zip)
+## [Download and Extract My Repository](https://github.com/nofurtherinformation/nextstop/archive/master.zip)
 
 ## Install Project Dependencies
 
