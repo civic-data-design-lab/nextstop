@@ -1,17 +1,17 @@
-from CardScanner import scan, process
-import schedule
+from CardScanner import scan, SCAN_DIR
 import time
-from os import listdir
-
-def scan_cards():
-    dev = scan.setup()
-    if dev is not None:
-        scan.doc_load(dev)
-    else:
-        print("cannot scan")
-
-schedule.every(1).seconds.do(scan_cards)
+from datetime import datetime
+import pyinsane2
+from math import floor
+import pytz
 
 while True:
-    schedule.run_pending()
-    time.sleep(1)
+    now_hour = datetime.now(pytz.timezone('America/New_York')).hour
+    if now_hour >= 19:
+        break
+    try:
+        images = scan.scan_cards()
+        images = [scan.bg_trim(img) for img in images]
+        scan.save_ab(images)
+    except:
+        print("No paper loaded.")

@@ -1,13 +1,14 @@
-import pyinsane2
 from PIL import Image, ImageChops
-# from CardReader import cr
-from math import floor
 import numpy as np
 import cv2
-import datetime
+from . import MAX_FEATURES, GOOD_MATCH_PERCENT, FRONT_MASK_COLOR_WINDOW
 
-MAX_FEATURES = 800
-GOOD_MATCH_PERCENT = 0.15
+def rotate(dst):
+    (h, w) = dst.shape[:2]
+    center = (w / 2, h / 2)
+    M = cv2.getRotationMatrix2D(center, 180, 1.0)
+    dst_rotated = cv2.warpAffine(dst, M, (w, h))
+    return dst_rotated
 
 def align_images_orb(im, ref):
     """
@@ -16,7 +17,7 @@ def align_images_orb(im, ref):
     Code is based on implementation found here: https://www.learnopencv.com/image-alignment-feature-based-using-opencv-c-python/
     """
     # Convert images to grayscale
-    ref = cv2.imread(ref)
+    # ref = cv2.imread(ref)
     im_gray = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
     ref_gray = cv2.cvtColor(ref, cv2.COLOR_BGR2GRAY)
     # Detect ORB features and compute descriptors.
@@ -33,7 +34,6 @@ def align_images_orb(im, ref):
     matches = matches[:num_good_matches]
     # Draw top matchesints
     im_matches = cv2.drawMatches(im, keypoints_im, ref, keypoints_ref, matches, None)
-    cv2.imwrite("matches.jpg", im_matches)
     # Extract location of good matches
     points_im = np.zeros((len(matches), 2), dtype=np.float32)
     points_ref = np.zeros((len(matches), 2), dtype=np.float32)
@@ -57,6 +57,7 @@ def align_images_ecc(im, ref):
     Code is based on implementation found here: https://www.learnopencv.com/image-alignment-ecc-in-opencv-c-python/
     """
     # Convert images to grayscale
+    # ref = cv2.imread(r)
     im_gray = cv2.cvtColor(im,cv2.COLOR_BGR2GRAY)
     ref_gray = cv2.cvtColor(ref,cv2.COLOR_BGR2GRAY)
     # Find size of ref
@@ -85,19 +86,17 @@ def align_images_ecc(im, ref):
         im_align = cv2.warpAffine(im, warp_matrix, (sz[1],sz[0]), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
     return im_align
 
-def bg_trim(im):
+white_hsv = [(0,0,180),(180, 15, 255)]
+black_hsv = [(0,0,0),(180, 255, 100)]
+
+def mask_front(img, b, color):
     """
-    Function to programmatically crop card to edge.
-    `im` is a PIL Image Object.
+    Process image
     """
-    # This initial crop is hacky and stupid (should just be able to set device
-    # options) but scanner isn't 'hearing' those settings.
-    im = im.crop((420, 0, 1275, 1200))
-    bg = Image.new(im.mode, im.size, im.getpixel((2, 2)))
-    diff = ImageChops.difference(im, bg)
-    diff = ImageChops.add(diff, diff, 2.0, -100)
-    bbox = diff.getbbox()
-    if bbox:
-        return im.crop(bbox)
-    else:
-        print("There's been a problem.")
+    col = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    blur = cv2.blur(col,(b, b))
+    mask_white = cv2.inRange(blur, white_hsv[0], white_hsv[1])
+    mask_color = cv2.inRange(blur, color - FRONT_MASK_COLOR_WINDOW, color + FRONT_MASK_COLOR_WINDOW)
+    mask = cv2.bitwise_or(mask_color, mask_white)
+    mask = cv2.bitwise_not(mask)
+    return cv2.bitwise_and(blur, blur, mask=mask)

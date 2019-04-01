@@ -1,242 +1,425 @@
 import cv2
 import numpy as np
-import datetime
-import glob
+from CardScanner import CHECKBOX_SIZE, CHECKBOX_THRESH, Q_COLOR_WINDOW, QUESTION_HUES, SERVER_TEMPLATES, SERVER_DATA_DIR, SERVER_RAW, SERVER_URL, SERVER_PROCESSED, process
+from glob import glob
+import os
+import json
+import uuid
+from datetime import datetime
+import pytz
+from scipy.misc import bytescale
+from PIL import Image
 
-age_yDims = np.array([382, 432, 482])
-gdr_yDims = np.array([563])
-# q3_yDims = np.array([780, 820, 870])
-hom_yDims = np.array([805])
-x_dims = np.array([215, 433, 615])
+def get_corners(img):
+    t_from_corner = 25
+    b_from_corner = 25
+    box_size = 10
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    d = dict()
+    d['height'], d['width'] = img.shape[:2]
+    tl_hsv = hsv[t_from_corner:t_from_corner + box_size, t_from_corner:t_from_corner+box_size]
+    tl_hsv = np.median(np.median(tl_hsv, axis=0), axis=0)
+    d['tl_hsv'] = tl_hsv
+    tr_hsv = hsv[t_from_corner:t_from_corner+box_size, d['width']-t_from_corner-box_size:d['width']-t_from_corner]
+    tr_hsv = np.median(np.median(tr_hsv, axis=0), axis=0)
+    d['tr_hsv'] = tr_hsv
+    bl_hsv = hsv[d['height']-b_from_corner-box_size:d['height']-b_from_corner, b_from_corner:b_from_corner + box_size]
+    bl_hsv = np.median(np.median(bl_hsv, axis=0), axis=0)
+    d['bl_hsv'] = bl_hsv
+    br_hsv = hsv[d['height']-b_from_corner-box_size:d['height']-b_from_corner, d['width']-b_from_corner-box_size:d['width']-b_from_corner]
+    br_hsv = np.median(np.median(br_hsv, axis=0), axis=0)
+    d['br_hsv'] = br_hsv
+    med = np.median(np.array([tl_hsv, tr_hsv, bl_hsv, br_hsv]), axis=0)
+    d['med'] = med
+    return d
 
-f_x_dims = np.array([50, 305])
-f_y_dims = np.array([530, 590, 650])
+def get_question(hsv):
+    possible_values = np.array([hsv['med'], hsv['tl_hsv'], hsv['tr_hsv'], hsv['bl_hsv'], hsv['br_hsv']])
+    q = None
+    for value in possible_values:
+        for question in QUESTION_HUES:
+            lower_bound = question[1] - Q_COLOR_WINDOW
+            upper_bound = question[1] + Q_COLOR_WINDOW
+            if np.all(value > lower_bound) and np.all(value < upper_bound):
+                q = question
+    return q
 
-black =  [0, 120]
-white = [190, 255]
+def get_answers(dst, q):
+	if (q==5):
+		"""
+		In 2040, the average person will...
+		"""
+		f_x_dims = np.array([45, 308])
+		f_y_dims = np.array([700, 770, 843])
+		answers = []
+		for i, x in enumerate(f_x_dims):
+			for j, y in enumerate(f_y_dims):
+				crop = dst[y:y+CHECKBOX_SIZE, x:x+CHECKBOX_SIZE]
+				if (j < 2) or ((j == 2) and (i==0)):
+					if (np.sum(crop) > CHECKBOX_THRESH):
+						# max_test = np.sum(crop)
+						# i_max = i
+						# j_max = j
+						if (i==0) & (j==0):
+							answers.append(10) # own a car
+						elif (i==0) & (j==1):
+							answers.append(11) # lease a car
+						elif (i==0) & (j==2):
+							answers.append(14) # have no car
+						elif (i==1) & (j==0):
+							answers.append(45) # own AV
+						elif (i==1) & (j==1):
+							answers.append(46) # lease AV
+		return answers
+	elif (q == 4):
+		"""
+		My preferred transport mode(s) in 2040 will be. . .
+		"""
+		answers = []
+		f_x_dims = np.array([45, 447])
+		f_y_dims = np.array([619, 679, 741, 800, 860, 920])
+		for i, x in enumerate(f_x_dims):
+			for j, y in enumerate(f_y_dims):
+				crop = dst[y:y+CHECKBOX_SIZE, x:x+CHECKBOX_SIZE]
+				if (j < 5) or ((j == 5) and (i==1)):
+					if (np.sum(crop) > CHECKBOX_THRESH):
+						if (i==0) & (j==0):
+							answers.append(15) #av bus
+						elif (i==0) & (j==1):
+							answers.append(48) # bus
+						elif (i==0) & (j==2):
+							answers.append(16) #av car
+						elif (i==0) & (j==3):
+							answers.append(47) # car
+						elif (i==0) & (j==4):
+							answers.append(49) # flying car
+						elif (i==1) & (j==0):
+							answers.append(21) # hyperloop
+						elif (i==1) & (j==1):
+							answers.append(18) # subways
+						elif (i==1) & (j==2):
+							answers.append(20) # walking
+						elif (i==1) & (j==3):
+							answers.append(19) # bikes
+						elif (i==1) & (j==4):
+							answers.append(17) # scooters
+						elif (i==1) & (j==5):
+							answers.append(23) # O T H E R
+		return answers
+	elif (q == 8):
+		"""
+		In 2040, everyone will have access to...
+		"""
+		f_x_dims = np.array([45, 448])
+		f_y_dims = np.array([621, 781, 740, 800, 858, 918])
+		answers = []
+		# max_test = 0
+		# i_max = -1
+		# j_max = -1
+		for i, x in enumerate(f_x_dims):
+			for j, y in enumerate(f_y_dims):
+				crop = dst[y:y+CHECKBOX_SIZE, x:x+CHECKBOX_SIZE]
+				if (j < 5) or ((j == 5) and (i==1)):
+					if (np.sum(crop) > CHECKBOX_THRESH):
+						if (i==0) & (j==0):
+							answers.append(15) #av bus
+						elif (i==0) & (j==1):
+							answers.append(48) # bus
+						elif (i==0) & (j==2):
+							answers.append(16) #av car
+						elif (i==0) & (j==3):
+							answers.append(47) # car
+						elif (i==0) & (j==4):
+							answers.append(49) # flying car
+						elif (i==1) & (j==0):
+							answers.append(21) # hyperloop
+						elif (i==1) & (j==1):
+							answers.append(18) # subways
+						elif (i==1) & (j==2):
+							answers.append(20) # walking
+						elif (i==1) & (j==3):
+							answers.append(19) # bikes
+						elif (i==1) & (j==4):
+							answers.append(17) # scooters
+						elif (i==1) & (j==5):
+							answers.append(23) # O T H E R
+		return answers
+	# Dims donezo.
+	elif (q == 13):
+		"""
+		In 2040...
+		"""
+		f_x_dims = np.array([45, 157])
+		f_y_dims = np.array([582, 654, 728, 803, 977])
 
-white_hsv = [(0,0,180),(180, 15, 255)]
-black_hsv = [(0,0,0),(180, 255, 100)]
-green_h = 131 / 360 * 180
-green_s = 55 / 100 * 255
-green_v = 64 / 100 * 255
-green = [(green_h-20,green_s-20,green_v-20), (green_h+20, green_s+20, green_v+20)]
+		max_test = 0
+		i_max = -1
+		j_max = -1
+		for i, x in enumerate(f_x_dims):
+			for j, y in enumerate(f_y_dims):
+				crop = dst[y:y+CHECKBOX_SIZE, x:x+CHECKBOX_SIZE]
+				if ((j < 4) and (i==0)) or ((j == 4) and (i==1)):
+					if (np.sum(crop) > CHECKBOX_THRESH) and (np.sum(crop) > max_test):
+						max_test = np.sum(crop)
+						i_max = i
+						j_max = j
+		if (i_max==0) & (j_max==0):
+			return [50] # parking spots into parks
+		elif (i_max==0) & (j_max==1):
+			return [51] # streets are for robots
+		elif (i_max==0) & (j_max==2):
+			return [52] # garages house grandmas
+		elif (i_max==0) & (j_max==3):
+			return [53] # parking lots urban farms
+		elif (i_max==1) & (j_max==4):
+			return [23] # O T H E R
+		else:
+			# print(max_test)
+			return []
+	elif (q == 14):
+		"""
+		Travel in the future will be more dangerous for...
+		"""
+		f_x_dims = np.array([44, 308, 432, 523])
+		f_y_dims = np.array([777, 849])
 
-blue_h = 220 / 360 * 180
-blue_s = 96 / 100 * 255
-blue_v = 44 / 100 * 255
-blue = [(blue_h-20, blue_s-20,blue_v-20), (blue_h+20, blue_s+20, blue_v+20)]
+		max_test = 0
+		i_max = -1
+		j_max = -1
+		for i, x in enumerate(f_x_dims):
+			for j, y in enumerate(f_y_dims):
+				crop = dst[y:y+CHECKBOX_SIZE, x:x+CHECKBOX_SIZE]
+				if (i < 1) or ((i == 1) and (j == 0)) or ((i == 3) and (j == 0)) or ((i == 2) and (j == 1)):
+					if (np.sum(crop) > CHECKBOX_THRESH) and (np.sum(crop) > max_test):
+						max_test = np.sum(crop)
+						i_max = i
+						j_max = j
+		if (i_max==0) & (j_max==0):
+			return [54] # pedestrians
+		elif (i_max==0) & (j_max==1):
+			return [57] # stray cats
+		elif (i_max==1) & (j_max==0):
+			return [55] # drivers
+		elif (i_max==3) & (j_max==0):
+			return [56] # bikers
+		elif (i_max==2) & (j_max==1):
+			return [23] # O T H E R
+		else:
+			# print(max_test)
+			return []
+	elif (q == 6):
+		"""
+		Responsibility for autonomous vehicle accidents belongs to...
+		"""
+		f_x_dims = np.array([45])
+		f_y_dims = np.array([700, 760, 818, 875, 933])
+		max_test = 0
+		i_max = -1
+		j_max = -1
+		for i, x in enumerate(f_x_dims):
+			for j, y in enumerate(f_y_dims):
+				crop = dst[y:y+CHECKBOX_SIZE, x:x+CHECKBOX_SIZE]
+				if (j < 5):
+					if (np.sum(crop) > CHECKBOX_THRESH) and (np.sum(crop) > max_test):
+						max_test = np.sum(crop)
+						i_max = i
+						j_max = j
+		if (i_max==0) & (j_max==0):
+			return [24] # car maker
+		elif (i_max==0) & (j_max==1):
+			return [25] # software dev
+		elif (i_max==0) & (j_max==2):
+			return [27] # insurance co
+		elif (i_max==0) & (j_max==3):
+			return [28] # av owner
+		elif (i_max==0) & (j_max==4):
+			return [58] # user at time
+		else:
+			return []
+	elif (q == 10):
+		"""
+		In the future, my transportation costs will...
+		"""
+		f_x_dims = np.array([47])
+		f_y_dims = np.array([689, 762, 839])
+		max_test = 0
+		i_max = -1
+		j_max = -1
+		for i, x in enumerate(f_x_dims):
+			for j, y in enumerate(f_y_dims):
+				crop = dst[y:y+CHECKBOX_SIZE, x:x+CHECKBOX_SIZE]
+				if (j < 3):
+					if (np.sum(crop) > CHECKBOX_THRESH) and (np.sum(crop) > max_test):
+						max_test = np.sum(crop)
+						i_max = i
+						j_max = j
+		if (i_max==0) & (j_max==0):
+			return [38] # increase
+		elif (i_max==0) & (j_max==1):
+			return [39] # decrease
+		elif (i_max==0) & (j_max==2):
+			return [40] # stay about the same
+		else:
+			# print(max_test)
+			return []
+	elif (q == 7):
+		"""
+		In 2040, commuting will take...
+		"""
+		f_x_dims = np.array([45])
+		f_y_dims = np.array([627, 698, 774, 845, 916])
 
-INTERVAL = 25
-IMG_PATH = ''
-PIXEL_THRESHOLD = 12500
-FRONT_BLUR = 3
-BACK_BLUR = 1
+		max_test = 0
+		i_max = -1
+		j_max = -1
+		for i, x in enumerate(f_x_dims):
+			for j, y in enumerate(f_y_dims):
+				crop = dst[y:y+CHECKBOX_SIZE, x:x+CHECKBOX_SIZE]
+				if (j < 5):
+					if (np.sum(crop) > CHECKBOX_THRESH) and (np.sum(crop) > max_test):
+						max_test = np.sum(crop)
+						i_max = i
+						j_max = j
+		if (i_max==0) & (j_max==0):
+			return [30] # less time
+		elif (i_max==0) & (j_max==1):
+			return [31] # no add time
+		elif (i_max==0) & (j_max==2):
+			return [32] # up to 30 more
+		elif (i_max==0) & (j_max==3):
+			return [33] # 30 - 60 more
+		elif (i_max==0) & (j_max==4):
+			return [34] # 60+ more
+		else:
+			# print(max_test)
+			return []
+	elif (q == 9):
+		"""
+		The future of mobility will make the world...
+		"""
+		f_x_dims = np.array([44])
+		f_y_dims = np.array([696, 768, 844])
 
-def age_get(dst):
-    """
-    Age
-    """
-    max_test = 0
-    i_max = -1
-    j_max = -1
-    for i, x in enumerate(x_dims):
-        for j, y in enumerate(age_yDims):
-            crop = dst[y:y+INTERVAL, x:x+INTERVAL]
-            if (np.sum(crop) > PIXEL_THRESHOLD) and (np.sum(crop) > max_test):
-                max_test = np.sum(crop)
-                i_max = i
-                j_max = j
-    if (i_max==0) & (j_max==0):
-        return "under-18"
-    elif (i_max==1) & (j_max==0):
-        return "18-24"
-    elif (i_max==2) & (j_max==0):
-        return "25-34"
-    elif (i_max==0) & (j_max==1):
-        return "36-44"
-    elif (i_max==1) & (j_max==1):
-        return "45-54"
-    elif (i_max==2) & (j_max==1):
-        return "55-64"
-    elif (i_max==0) & (j_max==2):
-        return "65+"
-    else:
-        # print(max_test)
-        return ""
+		max_test = 0
+		i_max = -1
+		j_max = -1
+		for i, x in enumerate(f_x_dims):
+			for j, y in enumerate(f_y_dims):
+				crop = dst[y:y+CHECKBOX_SIZE, x:x+CHECKBOX_SIZE]
+				if (j < 3):
+					if (np.sum(crop) > CHECKBOX_THRESH) and (np.sum(crop) > max_test):
+						max_test = np.sum(crop)
+						i_max = i
+						j_max = j
+		if (i_max==0) & (j_max==0):
+			return [60] # more fair/equitable
+		elif (i_max==0) & (j_max==1):
+			return [61] # less fair/equitable
+		elif (i_max==0) & (j_max==2):
+			return [62] # no more or no less equitable
+		else:
+			# print(max_test)
+			return []
+	elif (q == 12):
+		"""
+		Future mobility options will have the greatest impact on...
+		"""
+		f_x_dims = np.array([44])
+		f_y_dims = np.array([711, 780, 857, 927])
 
-def gdr_get(dst):
-    """
-    Gender
-    """
-    max_test = 0
-    i_max = -1
-    j_max = -1
-    for i, x in enumerate(x_dims):
-        for j, y in enumerate(gdr_yDims):
-            crop = dst[y:y+INTERVAL, x:x+INTERVAL]
-            if (j < 1):
-                if (np.sum(crop) > PIXEL_THRESHOLD) and (np.sum(crop) > max_test):
-                    max_test = np.sum(crop)
-                    i_max = i
-                    j_max = j
-    if (i_max==0) & (j_max==0):
-        return "nonbinary"
-    elif (i_max==1) & (j_max==0):
-        return "female"
-    elif (i_max==2) & (j_max==0):
-        return "male"
-    else:
-        # print(max_test)
-        return ""
+		max_test = 0
+		i_max = -1
+		j_max = -1
+		for i, x in enumerate(f_x_dims):
+			for j, y in enumerate(f_y_dims):
+				crop = dst[y:y+CHECKBOX_SIZE, x:x+CHECKBOX_SIZE]
+				if (j < 2) or ((j == 2) and (i==0)):
+					if (np.sum(crop) > CHECKBOX_THRESH) and (np.sum(crop) > max_test):
+						max_test = np.sum(crop)
+						i_max = i
+						j_max = j
+		if (i_max==0) & (j_max==0):
+			return [41] # truck drivers
+		elif (i_max==0) & (j_max==1):
+			return [42] # bike delivery people
+		elif (i_max==0) & (j_max==2):
+			return [63] # mass transit drivers
+		elif (i_max==0) & (j_max==3):
+			return [43] # taxi drivers
+		else:
+			# print(max_test)
+			return []
+	else:
+		return []
 
+def get_file_list(dir):
+    file_list = glob(dir)
+    file_list = sorted(file_list, key=str.lower)
+    return file_list
 
-def hom_get(dst):
-    """
-    Home
-    """
-    max_test = 0
-    i_max = -1
-    j_max = -1
-    for i, x in enumerate(x_dims):
-        for j, y in enumerate(hom_yDims):
-            crop = dst[y:y+INTERVAL, x:x+INTERVAL]
-            if (j < 1):
-                if (np.sum(crop) > PIXEL_THRESHOLD) and (np.sum(crop) > max_test):
-                    max_test = np.sum(crop)
-                    i_max = i
-                    j_max = j
-    if (i_max==0) & (j_max==0):
-        return "suburban"
-    elif (i_max==1) & (j_max==0):
-        return "urban"
-    elif (i_max==2) & (j_max==0):
-        return "rural"
-    else:
-        # print(max_test)
-        return ""
-
-def q3_get(dst):
-    """
-    In 2040, the average citizen will...
-    """
-    max_test = 0
-    i_max = -1
-    j_max = -1
-    for i, x in enumerate(f_x_dims):
-        for j, y in enumerate(f_y_dims):
-            crop = dst[y:y+INTERVAL, x:x+INTERVAL]
-            if (j < 2) or ((j == 2) and (i==0)):
-                if (np.sum(crop) > PIXEL_THRESHOLD) and (np.sum(crop) > max_test):
-                    max_test = np.sum(crop)
-                    i_max = i
-                    j_max = j
-    if (i_max==0) & (j_max==0):
-        return "Own a car"
-    elif (i_max==1) & (j_max==0):
-        return "Lease a car"
-    elif (i_max==0) & (j_max==1):
-        return "Own an AV"
-    elif (i_max==1) & (j_max==1):
-        return "Lease an AV"
-    elif (i_max==0) & (j_max==2):
-        return "Have no car"
-    else:
-        # print(max_test)
-        return ""
-
-def q2_get(dst):
-    """
-    My preferred transport mode(s) in 2040 will be...
-    """
-    max_test = 0
-    i_max = -1
-    j_max = -1
-    for i, x in enumerate(f_x_dims):
-        for j, y in enumerate(f_y_dims):
-            crop = dst[y:y+INTERVAL, x:x+INTERVAL]
-            if (j < 2) or ((j == 2) and (i==0)):
-                if (np.sum(crop) > PIXEL_THRESHOLD) and (np.sum(crop) > max_test):
-                    max_test = np.sum(crop)
-                    i_max = i
-                    j_max = j
-    if (i_max==0) & (j_max==0):
-        return "AV Buses"
-    elif (i_max==1) & (j_max==0):
-        return "AV Cars"
-    elif (i_max==2) & (j_max==0):
-        return "Scooters"
-    elif (i_max==0) & (j_max==1):
-        return "Subways"
-    elif (i_max==1) & (j_max==1):
-        return "Bikes"
-    elif (i_max==2) & (j_max==1):
-        return "Walking"
-    elif (i_max==0) & (j_max==2):
-        return "Hyperloop"
-    elif (i_max==1) & (j_max==2):
-        return "Train"
-    elif (i_max==2) & (j_max==2):
-        return "Other"
-    else:
-        # print(max_test)
-        return ""
-
-def image_process(img, b, side):
-    """
-    Process image
-    """
-    # img = cv2.imread(path)
-    if (side == 'b'):
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        blur = cv2.blur(gray,(b, b))
-        mask_white = cv2.inRange(blur, white_hsv[0], white_hsv[1])
-        mask_black = cv2.inRange(blur, black_hsv[0], black_hsv[1])
-        mask = cv2.bitwise_or(mask_white, mask_black)
-        # mask_inv = cv2.bitwise_or(mask_black, mask_white)
-    elif (side == 'f'):
-        col = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        blur = cv2.blur(col,(b, b))
-        mask_white = cv2.inRange(blur, white_hsv[0], white_hsv[1])
-        mask_color = cv2.inRange(blur, green[0], green[1])
-        mask = cv2.bitwise_or(mask_color, mask_white)
-    else:
-        print("Specify front or back.")
-    mask = cv2.bitwise_not(mask)
-    # cv2.imwrite('test.png', mask)
-    return cv2.bitwise_and(blur, blur, mask=mask)
-
-
-def read_front(img):
-    front_proc = image_process(img, 5, 'f')
-    # num = card.split('-')[0]
-    resp = q3_get(front_proc)
-    return [resp]
-
-def read_back(img):
-    back_proc = image_process(img, 1, 'b')
-    cv2.imwrite('back-test.png', back_proc)
-    # num = card.split('-')[0]
-    age = age_get(back_proc)
-    gdr = gdr_get(back_proc)
-    home = hom_get(back_proc)
-    return [age, gdr, home]
-#
-# def read_cards(path):
-#     """
-#     Read card
-#     """
-#     cards = glob.glob1(path,'*.png')
-#     # print(cards)
-#     for i, card in enumerate(sorted(cards)):
-#         if 'back' in card:
-#             front_card = card.replace('back', 'front')
-#             # Process card sides.
-#             back_proc = image_process(path + card, BACK_BLUR, 'b')
-#             front_proc = image_process(path + front_card, FRONT_BLUR, 'f')
-#             # num = card.split('-')[0]
-#             age = age_get(back_proc)
-#             gdr = gdr_get(back_proc)
-#             home = hom_get(back_proc)
-#             resp = q1_get(front_proc)
-#             print([resp, age, gdr, home])
+def read_from_disk(list):
+    # print(card_no)
+    with open(SERVER_DATA_DIR+'read.json', 'w') as f:
+        for i in range(0, len(list), 2):
+            # print(list[i])
+            front_idx = i
+            back_idx = i + 1
+            tz = pytz.timezone('America/New_York')
+            timestamp = datetime.fromtimestamp(os.path.getmtime(list[front_idx]), tz).isoformat()
+            front = cv2.imread(list[front_idx])
+            back = cv2.imread(list[back_idx])
+            corners = get_corners(front)
+            diff = corners['tl_hsv'][1] - corners['bl_hsv'][1]
+            if abs(diff) > 20:
+                print("front forward")
+                front, back = back, front
+                front_idx, back_idx = back_idx, front_idx
+                # print("wobble")
+            else:
+                print("back forward")
+            corners = get_corners(back)
+            diff = corners['tl_hsv'][1] - corners['bl_hsv'][1]
+            # rotate if necessary
+            if diff < -20:
+                print('upside down')
+                front = process.rotate(front)
+                back = process.rotate(back)
+            # blur = cv2.blur(front,(3, 3))
+            corners = get_corners(front)
+            # print(corners)
+            question = get_question(corners)
+            print(question)
+            # print(question)
+            front_file = os.path.basename(list[front_idx]).replace('-a.png','-front.jpg').replace('-b.png','-front.jpg')
+            back_file = os.path.basename(list[back_idx]).replace('-a.png','-back.jpg').replace('-b.png','-back.jpg')
+            if question is not None:
+                ref_front = cv2.imread(SERVER_TEMPLATES+'{:02}_front.jpg'.format(question[0]))
+                ref_h, ref_w = ref_front.shape[0], ref_front.shape[1]
+                print(front_file, back_file)
+                ref_front = ref_front[0+25:ref_h-25, 0+25:ref_w-25]
+                aligned_front = process.align_images_orb(front, ref_front)
+                cv2.imwrite(SERVER_PROCESSED+front_file, aligned_front, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+                cv2.imwrite(SERVER_PROCESSED+back_file, back, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+                masked = process.mask_front(aligned_front, 2,  question[1])
+                answers = get_answers(masked, question[0])
+                if len(answers) > 0:
+                    # print(answers)
+                    print(str(timestamp))
+                    f.write(json.dumps({
+                        'id': str(uuid.uuid4()),
+                        'q_id': question[0],
+                        'a_id': answers,
+                        'gender': '',
+                        'age': '',
+                        'zip_code': '',
+                        'home': '',
+                        'free_q_id': 2,
+                        'free_resp': '',
+                        'survey_id': 6,
+                        'front': SERVER_URL + front_file,
+                        'back': SERVER_URL + back_file,
+                        'timestamp': timestamp
+                    }, default=str) + "\n")
+            else:
+                cv2.imwrite(SERVER_PROCESSED+front_file, front, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+                cv2.imwrite(SERVER_PROCESSED+back_file, back, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
