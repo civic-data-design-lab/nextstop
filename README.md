@@ -27,13 +27,13 @@ Currently, this installation supports macOS and linux, although Windows usage is
 
 Assuming you have the scanner hooked up to a USB port, you should now be able to run `python3 scheduler.py` from a terminal window. This will get the scanner running - drop a card in and within a few sections it will scan.
 
-Your new scans will save as front and back PNGs in the folder 'scans' nested within your working directory.
+Your new scans will save as front and back PNGs in the `scans` folder of your computer.
 
 ## Processing Scans 
 
 Every night, the scheduler should upload the cards to the CDDL web server, which has the processing script. Additionally, the server *should* automatically process scans every night. Follow the below steps if the new scans are not appearing online and to manually process scans.
 
-1. Use SSH to connect to ehuntley.media.mit.edu.
+1. Use SSH to connect to the server. See the admin folder for credentials and address.
 2. Run `python3 /home/ehuntley/nextstop/process.py` to read and output the card json. `Read.json` will be output under `/home/ehuntley/scans/`. Note that this command will only process cards scanned within the past 24 hours, unless you have modified the timedelta variable, located under `nextstop/cardscanner/process.py`. 
 3. Ingest the JSON to SQL by running: cat `/home/ehuntley/scans/read.json | psql -d nextstop -U ehuntley -h localhost -c 'COPY pushjson (data) FROM STDIN;'`
 4. Then, to parse the SQL run `psql -d nextstop -U ehuntley -h localhost -f '/home/ehuntley/scans/parse_json.sql'`
